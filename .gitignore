@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+outputs/
+*.egg-info/
+.env
+pretrained_models/
