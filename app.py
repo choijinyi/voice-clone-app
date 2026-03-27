@@ -336,10 +336,12 @@ Controlled Generation Pipeline:
     return app
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── App instance (required by Vercel / hosting platforms) ─────────────────────
+
+demo = build_app()
+app = demo.app  # ASGI app for Vercel
 
 if __name__ == "__main__":
-    demo = build_app()
     demo.launch(
         server_name="127.0.0.1",
         server_port=7860,
