@@ -4,24 +4,29 @@ Architecture (from reference diagram):
   1. Voice Cloning:      Reference Audio → Global Tokenizer → LLM → BiCodec Decoder → Audio
   2. Controlled Generation: Attribute Prompt → Attribute Tokenizer → LLM → BiCodec Decoder → Audio
 
-Run:  python app.py
+Run locally:  python app.py
+Deploy:       vercel deploy
 """
 
 import asyncio
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 import gradio as gr
+from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 
 from engines import available_engines, get_engine
 from engines.edge_engine import LANG_MAP
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-OUTPUT_DIR = Path("outputs")
+# ── Paths ───────────────────────────────────────────────────────────────────────
+# Vercel: filesystem is read-only except /tmp
+OUTPUT_DIR = Path("/tmp/outputs") if os.environ.get("VERCEL") else Path("outputs")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# ── CSS ───────────────────────────────────────────────────────────────────────
+# ── CSS ─────────────────────────────────────────────────────────────────────────
 CSS = """
 .header { text-align: center; margin-bottom: 8px; }
 .header h1 { font-size: 2rem; margin-bottom: 0; }
@@ -33,7 +38,7 @@ CSS = """
 footer { display: none !important; }
 """
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────────
 
 def _out_path(prefix: str = "voice") -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -63,7 +68,7 @@ async def _get_voice_choices(language: str) -> list[tuple[str, str]]:
     return [(f"{v.name}  ({v.gender})", v.id) for v in voices]
 
 
-# ── Core functions ────────────────────────────────────────────────────────────
+# ── Core functions ────────────────────────────────────────────────────────────────
 
 async def do_generate(text: str, voice_id: str, language: str, speed: float):
     """Controlled generation — edge-tts."""
@@ -161,9 +166,9 @@ async def preview_voice(voice_id: str, language: str):
         return None
 
 
-# ── UI ────────────────────────────────────────────────────────────────────────
+# ── UI ────────────────────────────────────────────────────────────────────────────
 
-def build_app() -> gr.Blocks:
+def build_gradio() -> gr.Blocks:
     theme = gr.themes.Soft(
         primary_hue="indigo",
         secondary_hue="blue",
@@ -171,9 +176,9 @@ def build_app() -> gr.Blocks:
         font=[gr.themes.GoogleFont("Noto Sans KR"), "sans-serif"],
     )
 
-    with gr.Blocks(theme=theme, css=CSS, title="VoiceForge") as app:
+    with gr.Blocks(theme=theme, css=CSS, title="VoiceForge") as demo:
 
-        # ── Header ────────────────────────────────────────────────────────
+        # ── Header ────────────────────────────────────────────────────────────
         gr.HTML("""
         <div class="header">
             <h1>VoiceForge</h1>
@@ -183,7 +188,6 @@ def build_app() -> gr.Blocks:
 
         with gr.Tabs():
 
-            # ━━ Tab 1: Voice Cloning ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             with gr.TabItem("Voice Cloning"):
                 gr.Markdown("""
                 <div class="tip">
@@ -226,7 +230,6 @@ def build_app() -> gr.Blocks:
                     outputs=[clone_output, clone_status],
                 )
 
-            # ━━ Tab 2: Controlled Generation ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             with gr.TabItem("Voice Generation"):
                 gr.Markdown("""
                 <div class="tip">
@@ -265,86 +268,59 @@ def build_app() -> gr.Blocks:
                 gen_btn = gr.Button("Generate", variant="primary", size="lg")
                 gen_output = gr.Audio(label="Generated Audio", type="filepath")
 
-                # Dynamic voice list
                 gen_lang.change(fn=update_voices, inputs=[gen_lang], outputs=[gen_voice])
-                # Preview
                 preview_btn.click(
                     fn=preview_voice, inputs=[gen_voice, gen_lang], outputs=[preview_audio]
                 )
-                # Generate
                 gen_btn.click(
                     fn=do_generate,
                     inputs=[gen_text, gen_voice, gen_lang, gen_speed],
                     outputs=[gen_output],
                 )
 
-            # ━━ Tab 3: Settings ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             with gr.TabItem("Settings"):
                 gr.Markdown("### Engine Status")
                 gr.Markdown(_engine_status_md())
-
                 gr.Markdown("---")
                 gr.Markdown("""
 ### CosyVoice2 Installation Guide
 
-This app's voice cloning feature uses **CosyVoice2**, which matches the
-BiCodec architecture from the reference diagram.
-
-**Step 1 — Clone the repository**
-```bash
+**Step 1** — Clone the repository:
+\`\`\`bash
 git clone --recursive https://github.com/FunAudioLLM/CosyVoice.git
-cd CosyVoice
-pip install -r requirements.txt
-```
+cd CosyVoice && pip install -r requirements.txt
+\`\`\`
 
-**Step 2 — Download model weights**
-```bash
-# From ModelScope (recommended for Asia):
+**Step 2** — Download model weights:
+\`\`\`bash
 modelscope download --model iic/CosyVoice2-0.5B --local_dir pretrained_models/CosyVoice2-0.5B
+\`\`\`
 
-# Or from HuggingFace:
-huggingface-cli download FunAudioLLM/CosyVoice2-0.5B --local-dir pretrained_models/CosyVoice2-0.5B
-```
-
-**Step 3 — Set environment variable & run**
-```bash
+**Step 3** — Set environment variable & run:
+\`\`\`bash
 export COSYVOICE_MODEL_DIR=path/to/CosyVoice2-0.5B
 python app.py
-```
-
-> After installation, the **Voice Cloning** tab will use real zero-shot
-> voice cloning instead of the fallback TTS.
+\`\`\`
                 """)
 
-                gr.Markdown("---")
-                gr.Markdown("""
-### Architecture Reference
-
-```
-Voice Cloning Pipeline:
-  Reference Audio → Global Tokenizer ─┐
-                                       ├→ LLM → BiCodec Decoder → Audio
-  Text → BPE Tokenizer ───────────────┘
-
-Controlled Generation Pipeline:
-  Attribute Prompt → Attribute Tokenizer ─┐
-                                          ├→ LLM → BiCodec Decoder → Audio
-  Text → BPE Tokenizer ──────────────────┘
-```
-                """)
-
-    return app
+    return demo
 
 
-# ── App instance (required by Vercel / hosting platforms) ─────────────────────
+# ── FastAPI + Gradio mount (Vercel-compatible) ────────────────────────────────────────
 
-demo = build_app()
-app = demo.app  # ASGI app for Vercel
+app = FastAPI(title="VoiceForge")
 
+demo = build_gradio()
+
+# Root redirect → Gradio UI
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/ui/")
+
+# Mount Gradio as sub-app at /ui
+app = gr.mount_gradio_app(app, demo, path="/ui")
+
+# ── Local development ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    demo.launch(
-        server_name="127.0.0.1",
-        server_port=7860,
-        share=False,
-        show_error=True,
-    )
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=7860)
